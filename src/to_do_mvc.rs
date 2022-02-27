@@ -2,7 +2,7 @@ use wasm_bindgen::JsCast;
 use web_sys::{
     window, Document, EventTarget, HtmlInputElement, InputEvent, KeyboardEvent, MouseEvent,
 };
-use yew::{function_component, html, Callback, Component, Context, Html};
+use yew::{html, Callback, Component, Context, Html};
 
 pub enum Msg {
     InputTodoValue(String),
@@ -24,12 +24,12 @@ pub struct Todo {
 //     todo_list_ref: &'a TodoList,
 // }
 
-pub struct TodoMvc {
+pub struct Model {
     input: String,
     list: Vec<Todo>,
 }
 
-impl Component for TodoMvc {
+impl Component for Model {
     type Message = Msg;
     type Properties = ();
 
@@ -168,10 +168,10 @@ impl Component for TodoMvc {
                 .iter()
                 .map(|todo| {
                     html! {
-                      <>
+                      <div>
                         <input type="checkbox" />
                         <label>{ todo.message.to_string() }</label>
-                      </>
+                      </div>
                     }
                 })
                 .collect::<Html>();
