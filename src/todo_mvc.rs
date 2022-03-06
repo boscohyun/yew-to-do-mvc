@@ -1,9 +1,8 @@
-use std::ops::Deref;
-
+use std::rc::Rc;
 use web_sys::{HtmlInputElement, KeyboardEvent};
 use yew::{
-    function_component, html, use_effect, use_effect_with_deps, use_mut_ref, use_node_ref,
-    use_state, use_state_eq, Callback, Html, Properties,
+    function_component, html, use_node_ref, use_reducer, use_state, Callback, Html, Properties,
+    Reducible,
 };
 
 // InputTodo
@@ -28,13 +27,11 @@ fn input_todo(props: &InputTodoProps) -> Html {
             }
 
             let input_option = input_node_ref.cast::<HtmlInputElement>();
-            if input_option.is_none() {
-                return;
+            if let Some(input) = input_option {
+                let input_value = input.value();
+                input.set_value("");
+                props.on_submit.emit(input_value);
             }
-
-            let input = input_option.unwrap();
-            let input_value = input.value();
-            props.on_submit.emit(input_value);
         }
     };
 
@@ -48,56 +45,175 @@ fn input_todo(props: &InputTodoProps) -> Html {
 }
 // ~InputTodo
 
-// Todo
+// TodoItem
 #[derive(Properties, PartialEq, Clone)]
-pub struct TodoProps {
+pub struct TodoItemProps {
+    index: usize,
     message: String,
     completed: bool,
-    // onclick_checkbox
+    onclick_checkbox: Callback<usize>,
+    onclick_remove: Callback<usize>,
 }
 
-#[function_component(Todo)]
-fn todo(props: &TodoProps) -> Html {
+#[function_component(TodoItem)]
+fn todo_item(props: &TodoItemProps) -> Html {
+    let remove_button_enabled = use_state(|| false);
+    let checked = props.completed.clone();
+    let message = props.message.clone();
+
+    let onclick_checkbox = {
+        let index = props.index.clone();
+        let onclick_checkbox = props.onclick_checkbox.clone();
+
+        move |_| onclick_checkbox.emit(index)
+    };
+
+    let onclick_remove = {
+        let index = props.index.clone();
+        let onclick_remove = props.onclick_remove.clone();
+
+        move |_| onclick_remove.emit(index)
+    };
+
+    let onmouseenter = {
+        let remove_button_enabled = remove_button_enabled.clone();
+        move |_| remove_button_enabled.set(true)
+    };
+
+    let onmouseleave = {
+        let remove_button_enabled = remove_button_enabled.clone();
+        move |_| remove_button_enabled.set(false)
+    };
+
+    let button_style = if *remove_button_enabled {
+        String::from("")
+    } else {
+        String::from("display: none")
+    };
+
     html! {
-      <div>
-        <input type="checkbox" />
-        <label>{ &props.message }</label>
+      <div {onmouseenter} {onmouseleave}>
+        <input type="checkbox" onclick={onclick_checkbox} {checked} />
+        <label>{ message }</label>
+        <button style={ button_style } onclick={onclick_remove}>{ "x" }</button>
       </div>
     }
 }
-// ~Todo
+// ~TodoItem
 
 // TodoMVC
 #[derive(Properties, PartialEq, Default)]
 pub struct TodoMVCProps {
-    #[prop_or(Vec::<TodoProps>::new())]
-    todo_list: Vec<TodoProps>,
+    #[prop_or(Vec::<TodoItemProps>::new())]
+    todo_list: Vec<TodoItemProps>,
+}
+
+struct TodoMVCState {
+    todo_list: Vec<TodoItemProps>,
+}
+
+impl Default for TodoMVCState {
+    fn default() -> TodoMVCState {
+        Self {
+            todo_list: Vec::<TodoItemProps>::new(),
+        }
+    }
+}
+
+enum TodoMVCAction {
+    RegisterTodo(String),
+    UnregisterTodo(usize),
+    ToggleCompleted(usize),
+    ToggleCompletedAll,
+}
+
+impl Reducible for TodoMVCState {
+    type Action = TodoMVCAction;
+
+    fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
+        match action {
+            TodoMVCAction::RegisterTodo(message) => {
+                let mut todo_list = self.todo_list.clone();
+                let index = todo_list.len();
+                todo_list.push(TodoItemProps {
+                    index,
+                    message,
+                    completed: false,
+                    onclick_checkbox: Callback::default(),
+                    onclick_remove: Callback::default(),
+                });
+
+                Self { todo_list }.into()
+            }
+            TodoMVCAction::UnregisterTodo(index) => {
+                let mut todo_list = self.todo_list.clone();
+                if index >= todo_list.len() {
+                    return self;
+                }
+
+                todo_list.remove(index);
+                Self { todo_list }.into()
+            }
+            TodoMVCAction::ToggleCompleted(index) => {
+                let mut todo_list = self.todo_list.clone();
+                if index >= todo_list.len() {
+                    return self;
+                }
+
+                let todo_item = &mut todo_list[index];
+                todo_item.completed = !todo_item.completed;
+                Self { todo_list }.into()
+            }
+            TodoMVCAction::ToggleCompletedAll => {
+                log::info!("onclick complete all");
+                let todo_list = self.todo_list.clone();
+                let already_completed_all: bool = todo_list.iter().all(|todo| todo.completed);
+                let todo_list = todo_list
+                    .iter()
+                    .map(|todo_item| TodoItemProps {
+                        message: todo_item.message.clone(),
+                        completed: !already_completed_all,
+                        onclick_checkbox: todo_item.onclick_checkbox.clone(),
+                        onclick_remove: todo_item.onclick_remove.clone(),
+                        ..(*todo_item)
+                    })
+                    .collect::<Vec<TodoItemProps>>();
+
+                Self { todo_list }.into()
+            }
+        }
+    }
 }
 
 #[function_component(TodoMVC)]
 pub fn todo_mvc(props: &TodoMVCProps) -> Html {
-    let todo_list_state = use_state_eq(|| props.todo_list.clone());
-    let on_input_todo_submitted = {
-        let todo_list_state = todo_list_state.clone();
-
-        Callback::from(move |todo_message: String| {
-            let todo_list_state = todo_list_state.clone();
-            let mut todo_list = todo_list_state.deref().clone();
-            todo_list.push(TodoProps {
-                message: todo_message,
-                completed: false,
-            });
-            todo_list_state.set(todo_list);
-        })
+    let props = props.clone();
+    let reducer = use_reducer(|| TodoMVCState {
+        todo_list: props.todo_list.clone(),
+    });
+    let register_todo = {
+        let reducer = reducer.clone();
+        Callback::from(move |message| reducer.dispatch(TodoMVCAction::RegisterTodo(message)))
+    };
+    let unregister_todo = {
+        let reducer = reducer.clone();
+        Callback::from(move |index| reducer.dispatch(TodoMVCAction::UnregisterTodo(index)))
+    };
+    let toggle_completed = {
+        let reducer = reducer.clone();
+        Callback::from(move |index| reducer.dispatch(TodoMVCAction::ToggleCompleted(index)))
+    };
+    let toggle_completed_all = {
+        let reducer = reducer.clone();
+        Callback::from(move |_| reducer.dispatch(TodoMVCAction::ToggleCompletedAll))
     };
 
-    let has_todo = todo_list_state.len() > 0;
-    let complete_all_button_html = if has_todo {
+    let has_todo_item = reducer.todo_list.len() > 0;
+    let complete_all_button_html = if has_todo_item {
         html! {
           <button
             style="margin-right:2px;"
-            // onclick={Callback::from(onclick_complete_all)}>
-          >
+            onclick={toggle_completed_all}>
             {"complete all"}
           </button>
         }
@@ -109,24 +225,30 @@ pub fn todo_mvc(props: &TodoMVCProps) -> Html {
       <div>
         <h1>{"todos"}</h1>
         <div>
-                {complete_all_button_html}
-                <InputTodo on_submit={ on_input_todo_submitted }/>
-              </div>
-              <ol style={ "list-style-type: none;" }>
-              {
-                  todo_list_state.iter().map(|todo_props| html! {
-                      <li>
-                        <input type="checkbox" />
-                        <label>{ todo_props.message.to_string() }</label>
-                      </li>
-                  }).collect::<Html>()
-                }
-              </ol>
-              <div>
-                {"Double-click to edit a todo"}<br />
-                {"Created by Hyun Seungmin"}<br />
-                {"Part of TodoMVC"}<br />
-              </div>
+          {complete_all_button_html}
+          <InputTodo on_submit={ register_todo }/>
+        </div>
+        {
+          reducer.todo_list.iter().map(|todo_item| {
+            let toggle_completed = toggle_completed.clone();
+            let unregister_todo = unregister_todo.clone();
+            html! {
+              <TodoItem
+                key={ todo_item.index }
+                onclick_checkbox={ toggle_completed }
+                onclick_remove={ unregister_todo }
+                ..todo_item.clone() />
+            }
+          }).collect::<Html>()
+        }
+        <div>
+          <label>{ format!("{} items left", reducer.todo_list.iter().filter(|todo_item| !todo_item.completed).count()) }</label>
+        </div>
+        <div>
+          {"Double-click to edit a todo"}<br />
+          {"Created by Hyun Seungmin"}<br />
+          {"Part of TodoMVC"}<br />
+        </div>
       </div>
     }
 }
