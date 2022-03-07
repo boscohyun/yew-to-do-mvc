@@ -108,21 +108,32 @@ pub struct TodoMVCProps {
     todo_list: Vec<TodoItemProps>,
 }
 
+#[derive(Clone)]
+enum TodoMVCTab {
+    All,
+    Active,
+    Completed,
+}
+
 struct TodoMVCState {
+    tab: TodoMVCTab,
     todo_list: Vec<TodoItemProps>,
 }
 
 impl Default for TodoMVCState {
     fn default() -> TodoMVCState {
         Self {
+            tab: TodoMVCTab::All,
             todo_list: Vec::<TodoItemProps>::new(),
         }
     }
 }
 
 enum TodoMVCAction {
+    ChangeTab(TodoMVCTab),
     RegisterTodo(String),
     UnregisterTodo(usize),
+    UnregisterCompletedTodoAll,
     ToggleCompleted(usize),
     ToggleCompletedAll,
 }
@@ -132,6 +143,11 @@ impl Reducible for TodoMVCState {
 
     fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
         match action {
+            TodoMVCAction::ChangeTab(tab) => Self {
+                tab,
+                todo_list: self.todo_list.clone(),
+            }
+            .into(),
             TodoMVCAction::RegisterTodo(message) => {
                 let mut todo_list = self.todo_list.clone();
                 let index = todo_list.len();
@@ -142,8 +158,11 @@ impl Reducible for TodoMVCState {
                     onclick_checkbox: Callback::default(),
                     onclick_remove: Callback::default(),
                 });
-
-                Self { todo_list }.into()
+                Self {
+                    tab: self.tab.clone(),
+                    todo_list,
+                }
+                .into()
             }
             TodoMVCAction::UnregisterTodo(index) => {
                 let mut todo_list = self.todo_list.clone();
@@ -152,7 +171,24 @@ impl Reducible for TodoMVCState {
                 }
 
                 todo_list.remove(index);
-                Self { todo_list }.into()
+                Self {
+                    tab: self.tab.clone(),
+                    todo_list,
+                }
+                .into()
+            }
+            TodoMVCAction::UnregisterCompletedTodoAll => {
+                // let todo_list = self
+                //     .todo_list
+                //     .iter()
+                //     .filter(|todo_item| !todo_item.completed)
+                //     .collect::<Vec<TodoItemProps>>();
+
+                Self {
+                    tab: self.tab.clone(),
+                    todo_list: vec![], //todo_list,
+                }
+                .into()
             }
             TodoMVCAction::ToggleCompleted(index) => {
                 let mut todo_list = self.todo_list.clone();
@@ -162,7 +198,11 @@ impl Reducible for TodoMVCState {
 
                 let todo_item = &mut todo_list[index];
                 todo_item.completed = !todo_item.completed;
-                Self { todo_list }.into()
+                Self {
+                    tab: self.tab.clone(),
+                    todo_list,
+                }
+                .into()
             }
             TodoMVCAction::ToggleCompletedAll => {
                 log::info!("onclick complete all");
@@ -178,8 +218,11 @@ impl Reducible for TodoMVCState {
                         ..(*todo_item)
                     })
                     .collect::<Vec<TodoItemProps>>();
-
-                Self { todo_list }.into()
+                Self {
+                    tab: self.tab.clone(),
+                    todo_list,
+                }
+                .into()
             }
         }
     }
@@ -189,8 +232,21 @@ impl Reducible for TodoMVCState {
 pub fn todo_mvc(props: &TodoMVCProps) -> Html {
     let props = props.clone();
     let reducer = use_reducer(|| TodoMVCState {
+        tab: TodoMVCTab::All,
         todo_list: props.todo_list.clone(),
     });
+    let change_tab_all = {
+        let reducer = reducer.clone();
+        Callback::from(move |_| reducer.dispatch(TodoMVCAction::ChangeTab(TodoMVCTab::All)))
+    };
+    let change_tab_active = {
+        let reducer = reducer.clone();
+        Callback::from(move |_| reducer.dispatch(TodoMVCAction::ChangeTab(TodoMVCTab::Active)))
+    };
+    let change_tab_completed = {
+        let reducer = reducer.clone();
+        Callback::from(move |_| reducer.dispatch(TodoMVCAction::ChangeTab(TodoMVCTab::Completed)))
+    };
     let register_todo = {
         let reducer = reducer.clone();
         Callback::from(move |message| reducer.dispatch(TodoMVCAction::RegisterTodo(message)))
@@ -198,6 +254,10 @@ pub fn todo_mvc(props: &TodoMVCProps) -> Html {
     let unregister_todo = {
         let reducer = reducer.clone();
         Callback::from(move |index| reducer.dispatch(TodoMVCAction::UnregisterTodo(index)))
+    };
+    let unregister_completed_todo_all = {
+        let reducer = reducer.clone();
+        Callback::from(move |_| reducer.dispatch(TodoMVCAction::UnregisterCompletedTodoAll))
     };
     let toggle_completed = {
         let reducer = reducer.clone();
@@ -221,6 +281,15 @@ pub fn todo_mvc(props: &TodoMVCProps) -> Html {
         html! {}
     };
 
+    let filtered_todo_list = reducer
+        .todo_list
+        .iter()
+        .filter(|todo_item| match reducer.tab {
+            TodoMVCTab::All => true,
+            TodoMVCTab::Active => !todo_item.completed,
+            TodoMVCTab::Completed => todo_item.completed,
+        });
+
     html! {
       <div>
         <h1>{"todos"}</h1>
@@ -229,20 +298,24 @@ pub fn todo_mvc(props: &TodoMVCProps) -> Html {
           <InputTodo on_submit={ register_todo }/>
         </div>
         {
-          reducer.todo_list.iter().map(|todo_item| {
-            let toggle_completed = toggle_completed.clone();
-            let unregister_todo = unregister_todo.clone();
-            html! {
-              <TodoItem
-                key={ todo_item.index }
-                onclick_checkbox={ toggle_completed }
-                onclick_remove={ unregister_todo }
-                ..todo_item.clone() />
-            }
-          }).collect::<Html>()
+            filtered_todo_list.map(|todo_item| {
+              let toggle_completed = toggle_completed.clone();
+              let unregister_todo = unregister_todo.clone();
+              html! {
+                <TodoItem
+                  key={ todo_item.index }
+                  onclick_checkbox={ toggle_completed }
+                  onclick_remove={ unregister_todo }
+                  ..todo_item.clone() />
+              }
+            }).collect::<Html>()
         }
         <div>
           <label>{ format!("{} items left", reducer.todo_list.iter().filter(|todo_item| !todo_item.completed).count()) }</label>
+          <button onclick={ change_tab_all }>{ "All" }</button>
+          <button onclick={ change_tab_active }>{ "Active" }</button>
+          <button onclick={ change_tab_completed }>{ "Completed" }</button>
+          <button onclick={ unregister_completed_todo_all }>{ "Clear completed" }</button>
         </div>
         <div>
           {"Double-click to edit a todo"}<br />
