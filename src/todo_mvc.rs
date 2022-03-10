@@ -178,15 +178,11 @@ impl Reducible for TodoMVCState {
                 .into()
             }
             TodoMVCAction::UnregisterCompletedTodoAll => {
-                // let todo_list = self
-                //     .todo_list
-                //     .iter()
-                //     .filter(|todo_item| !todo_item.completed)
-                //     .collect::<Vec<TodoItemProps>>();
-
+                let mut todo_list = self.todo_list.clone();
+                todo_list.retain(|todo_item| !todo_item.completed);
                 Self {
                     tab: self.tab.clone(),
-                    todo_list: vec![], //todo_list,
+                    todo_list,
                 }
                 .into()
             }
